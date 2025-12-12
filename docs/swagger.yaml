@@ -1,0 +1,12 @@
+basePath: /api
+host: localhost:8080
+info:
+  contact: {}
+  description: Sample Echo service with repository pattern, GORM, Redis cache, JWT,
+    and Swagger docs.
+  title: Echo Starter API
+  version: "1.0"
+paths: {}
+schemes:
+- http
+swagger: "2.0"

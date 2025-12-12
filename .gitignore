@@ -1,0 +1,31 @@
+# Binaries
+/server
+/bin/
+/out/
+
+# Build artifacts
+*.exe
+*.test
+*.out
+
+# Coverage
+*.cover
+coverage.*
+
+# Vendor / dependencies
+/vendor/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# Environment and secrets
+.env
+
+# Docker
+/docker-data/
+
+# Logs
+*.log
+
