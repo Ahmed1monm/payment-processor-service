@@ -57,11 +57,11 @@ internal/
 
 1. Clone the repository and navigate to the project directory:
    ```bash
-   cd E:\side-projects\go
+   cd /path/to/go
    ```
 
 2. Start all services (MySQL, Redis, and API):
-   ```powershell
+   ```bash
    docker-compose up --build
    ```
 
@@ -70,33 +70,39 @@ internal/
 
 ### Manual Setup
 
-1. **Set environment variables** (or use defaults):
-   ```powershell
-   $env:SERVER_PORT="8080"
-   $env:MYSQL_DSN="user:password@tcp(localhost:3306)/app?charset=utf8mb4&parseTime=True&loc=Local"
-   $env:REDIS_ADDR="localhost:6379"
-   $env:REDIS_DB="0"
-   $env:REDIS_PASSWORD=""  # Optional
-   $env:JWT_SECRET="your-secret-key-here"  # Change this!
+1. **Copy environment file**:
+   ```bash
+   cp .env.example .env
+   ```
+   Then edit `.env` with your configuration values.
+
+2. **Set environment variables** (or use defaults):
+   ```bash
+   export SERVER_PORT="8080"
+   export MYSQL_DSN="user:password@tcp(localhost:3306)/app?charset=utf8mb4&parseTime=True&loc=Local"
+   export REDIS_ADDR="localhost:6379"
+   export REDIS_DB="0"
+   export REDIS_PASSWORD=""  # Optional
+   export JWT_SECRET="your-secret-key-here"  # Change this!
    ```
 
-2. **Start MySQL and Redis** (if not using Docker):
+3. **Start MySQL and Redis** (if not using Docker):
    - MySQL should be running on port 3306
    - Redis should be running on port 6379
 
-3. **Run the server**:
-   ```powershell
-   cd E:\side-projects\go
+4. **Run the server**:
+   ```bash
+   cd /path/to/go
    go run ./cmd/server
    ```
 
-4. **Seed accounts** (optional):
-   ```powershell
+5. **Seed accounts** (optional):
+   ```bash
    # Option 1: Using the standalone CLI script (recommended)
    go run ./cmd/seed
    # Or build and run:
-   go build -o seed.exe ./cmd/seed
-   .\seed.exe
+   go build -o seed ./cmd/seed
+   ./seed
    
    # Option 2: Using the HTTP endpoint
    curl http://localhost:8080/api/seed/accounts
@@ -185,25 +191,25 @@ internal/
 
 ### Running Unit Tests
 
-```powershell
+```bash
 go test ./internal/service/...
 ```
 
 ### Running Integration Tests
 
-```powershell
+```bash
 go test ./internal/handler/...
 ```
 
 ### Running All Tests
 
-```powershell
+```bash
 go test ./...
 ```
 
 ### Test Coverage
 
-```powershell
+```bash
 go test -cover ./...
 ```
 
@@ -212,10 +218,9 @@ go test -cover ./...
 1. **View Swagger UI**: Navigate to `http://localhost:8080/swagger/index.html`
 
 2. **Regenerate Swagger Docs** (if you modify handlers):
-   ```powershell
-   cd E:\side-projects\go\cmd\server
-   $env:PATH="C:\Program Files\Go\bin;" + $env:PATH
-   swag init -g main.go -o ..\docs
+   ```bash
+   cd cmd/server
+   swag init -g main.go -o ../docs
    ```
 
 ## Example Usage Flow
