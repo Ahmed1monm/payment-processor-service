@@ -1,17 +1,18 @@
 # Payment Processor System
 
-A production-ready RESTful API for processing card payments and account-to-account transfers, built with Go, Echo framework, MySQL, and Redis.
+A production-ready RESTful API for processing card payments and card-to-card transfers, built with Go, Echo framework, MySQL, and Redis. Features account-based authentication with merchant/user distinction and card-based balance management.
 
 ## Features
 
-- **Card Payment Processing**: Accept card payments with Luhn algorithm validation
-- **Account Transfers**: Secure account-to-account money transfers with atomic balance updates
+- **Card Payment Processing**: Process payments using card balances with merchant account validation
+- **Card-to-Card Transfers**: Secure card-to-card money transfers with atomic balance updates
 - **JWT Authentication**: Access and refresh token-based authentication with Redis storage
-- **Account Management**: Account balance queries and external API seeding
+- **Account Management**: Account registration with merchant/user distinction, card balance queries
+- **Card Management**: Cards linked to accounts with individual balances
 - **Payment Logging**: All payment attempts are logged regardless of success/failure
-- **Concurrency Safety**: Mutex-based locking for payments, transaction-based transfers
+- **Concurrency Safety**: Mutex-based locking for card operations, transaction-based transfers
 - **Comprehensive Testing**: Unit and integration tests
-- **API Documentation**: Swagger/OpenAPI documentation
+- **API Documentation**: Swagger/OpenAPI documentation available at `/api-docs`
 
 ## Architecture
 
@@ -60,13 +61,21 @@ internal/
    cd /path/to/go
    ```
 
-2. Start all services (MySQL, Redis, and API):
+2. **Reset database** (optional, if you want a fresh start):
+   ```bash
+   # This will remove all data volumes and start fresh
+   docker-compose down -v
+   ```
+
+3. Start all services (MySQL, Redis, and API):
    ```bash
    docker-compose up --build
    ```
+   - The seed script will automatically drop existing tables and recreate them
+   - 500 accounts will be seeded from the external API
 
-3. The API will be available at `http://localhost:8080`
-4. Swagger UI: `http://localhost:8080/swagger/index.html`
+4. The API will be available at `http://localhost:5000`
+5. Swagger UI: `http://localhost:5000/api-docs`
 
 ### Manual Setup
 
@@ -78,12 +87,13 @@ internal/
 
 2. **Set environment variables** (or use defaults):
    ```bash
-   export SERVER_PORT="8080"
+   export SERVER_PORT="5000"
    export MYSQL_DSN="user:password@tcp(localhost:3306)/app?charset=utf8mb4&parseTime=True&loc=Local"
    export REDIS_ADDR="localhost:6379"
    export REDIS_DB="0"
    export REDIS_PASSWORD=""  # Optional
    export JWT_SECRET="your-secret-key-here"  # Change this!
+   export RESET_DB="true"  # Optional: Drop and recreate tables on startup
    ```
 
 3. **Start MySQL and Redis** (if not using Docker):
@@ -99,27 +109,31 @@ internal/
 5. **Seed accounts** (optional):
    ```bash
    # Option 1: Using the standalone CLI script (recommended)
+   # This will drop existing tables and recreate them with fresh data
    go run ./cmd/seed
    # Or build and run:
    go build -o seed ./cmd/seed
    ./seed
    
    # Option 2: Using the HTTP endpoint
-   curl http://localhost:8080/api/seed/accounts
+   curl http://localhost:5000/api/seed/accounts
    ```
 
 ## API Endpoints
 
 ### Authentication (Public)
 
-- `POST /api/auth/register` - Register a new user
+- `POST /api/auth/register` - Register a new account
   ```json
   {
     "email": "user@example.com",
     "password": "password123",
-    "name": "John Doe"
+    "name": "John Doe",
+    "is_merchant": false
   }
   ```
+  - Creates an `Account` record (not a separate user table)
+  - `is_merchant`: Set to `true` for merchant accounts, `false` for regular users
 
 - `POST /api/auth/login` - Login and get tokens
   ```json
@@ -146,8 +160,9 @@ internal/
 
 ### Account Management (Protected)
 
-- `GET /api/accounts/{id}/balance` - Get account balance
+- `GET /api/accounts/{id}/balance` - Get total balance across all cards for an account
   - Requires: `Authorization: Bearer <access_token>`
+  - Returns the sum of balances from all active cards linked to the account
 
 ### Payments (Protected)
 
@@ -155,30 +170,30 @@ internal/
   ```json
   {
     "merchant_account_id": "uuid-here",
-    "amount": "100.50",
-    "card_number": "4111111111111111",
-    "card_expiry": "12/25",
-    "card_cvv": "123"
+    "card_id": "uuid-here",
+    "amount": "100.50"
   }
   ```
   - Requires: `Authorization: Bearer <access_token>`
-  - Validates card using Luhn algorithm
-  - Updates merchant balance atomically
+  - `merchant_account_id`: Must be an account with `is_merchant: true`
+  - `card_id`: The card to deduct payment from (card must exist and be active)
+  - Deducts amount from the card's balance
   - Logs all payment attempts
 
 ### Transfers (Protected)
 
-- `POST /api/transfers` - Transfer money between accounts
+- `POST /api/transfers` - Transfer money between cards
   ```json
   {
-    "source_account_id": "uuid-here",
-    "destination_account_id": "uuid-here",
+    "source_card_id": "uuid-here",
+    "destination_card_id": "uuid-here",
     "amount": "50.00"
   }
   ```
   - Requires: `Authorization: Bearer <access_token>`
-  - Validates both accounts exist and are active
-  - Checks sufficient balance
+  - Transfers balance from one card to another
+  - Validates both cards exist and are active
+  - Checks sufficient balance on source card
   - Atomic balance updates using database transactions
 
 ### Seed Data (Public)
@@ -215,7 +230,7 @@ go test -cover ./...
 
 ## Swagger Documentation
 
-1. **View Swagger UI**: Navigate to `http://localhost:8080/swagger/index.html`
+1. **View Swagger UI**: Navigate to `http://localhost:5000/api-docs`
 
 2. **Regenerate Swagger Docs** (if you modify handlers):
    ```bash
@@ -225,57 +240,67 @@ go test -cover ./...
 
 ## Example Usage Flow
 
-1. **Register a user**:
+1. **Register an account** (merchant or user):
    ```bash
-   curl -X POST http://localhost:8080/api/auth/register \
+   # Register as merchant
+   curl -X POST http://localhost:5000/api/auth/register \
      -H "Content-Type: application/json" \
-     -d '{"email":"merchant@example.com","password":"secure123","name":"Merchant"}'
+     -d '{"email":"merchant@example.com","password":"secure123","name":"Merchant","is_merchant":true}'
+   
+   # Register as regular user
+   curl -X POST http://localhost:5000/api/auth/register \
+     -H "Content-Type: application/json" \
+     -d '{"email":"user@example.com","password":"secure123","name":"User","is_merchant":false}'
    ```
 
 2. **Login to get tokens**:
    ```bash
-   curl -X POST http://localhost:8080/api/auth/login \
+   curl -X POST http://localhost:5000/api/auth/login \
      -H "Content-Type: application/json" \
      -d '{"email":"merchant@example.com","password":"secure123"}'
    ```
 
-3. **Seed accounts** (get merchant account IDs):
+3. **Seed accounts** (creates accounts from external API):
    ```bash
-   # Using CLI script (recommended)
+   # Using CLI script (recommended - drops and recreates tables)
    go run ./cmd/seed
    
    # Or using HTTP endpoint
-   curl http://localhost:8080/api/seed/accounts
+   curl http://localhost:5000/api/seed/accounts
    ```
 
-4. **Process a card payment**:
+4. **Create a card** (cards must be created separately - balance is stored on cards):
    ```bash
-   curl -X POST http://localhost:8080/api/payments/card \
+   # Note: Card creation endpoint would need to be implemented
+   # Cards are linked to accounts and have their own balance
+   ```
+
+5. **Process a card payment**:
+   ```bash
+   curl -X POST http://localhost:5000/api/payments/card \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
      -d '{
-       "merchant_account_id": "account-uuid-here",
-       "amount": "100.00",
-       "card_number": "4111111111111111",
-       "card_expiry": "12/25",
-       "card_cvv": "123"
+       "merchant_account_id": "merchant-account-uuid",
+       "card_id": "card-uuid-here",
+       "amount": "100.00"
      }'
    ```
 
-5. **Check account balance**:
+6. **Check account balance** (sum of all card balances):
    ```bash
-   curl http://localhost:8080/api/accounts/ACCOUNT_UUID/balance \
+   curl http://localhost:5000/api/accounts/ACCOUNT_UUID/balance \
      -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
    ```
 
-6. **Transfer money**:
+7. **Transfer money between cards**:
    ```bash
-   curl -X POST http://localhost:8080/api/transfers \
+   curl -X POST http://localhost:5000/api/transfers \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
      -d '{
-       "source_account_id": "source-uuid",
-       "destination_account_id": "dest-uuid",
+       "source_card_id": "source-card-uuid",
+       "destination_card_id": "dest-card-uuid",
        "amount": "50.00"
      }'
    ```
@@ -283,13 +308,16 @@ go test -cover ./...
 ## Concurrency & Safety
 
 ### Payment Processing
-- Uses per-account mutexes to prevent concurrent balance updates
+- Uses per-card mutexes to prevent concurrent balance updates
+- Validates merchant account and card status before processing
+- Deducts payment amount from card balance
 - Row-level locking (`SELECT ... FOR UPDATE`) ensures data consistency
 - All payment attempts are logged asynchronously via channel-based worker
 
 ### Transfer Processing
 - Database transactions ensure atomic balance updates
-- Both source and destination accounts are locked during transfer
+- Both source and destination cards are locked during transfer
+- Validates card status and sufficient balance
 - Rollback on any error prevents partial updates
 
 ### Token Management
@@ -309,32 +337,83 @@ All errors follow a consistent format:
 
 Common error codes:
 - `ACCOUNT_NOT_FOUND` - Account doesn't exist
+- `CARD_NOT_FOUND` - Card doesn't exist
 - `ACCOUNT_INACTIVE` - Account is not active
-- `INSUFFICIENT_BALANCE` - Insufficient funds
-- `INVALID_CARD` - Card validation failed
+- `INSUFFICIENT_BALANCE` - Insufficient funds on card
+- `INVALID_CARD` - Card validation failed or card is inactive
 - `INVALID_AMOUNT` - Invalid payment/transfer amount
 - `INVALID_CREDENTIALS` - Authentication failed
 - `INVALID_REFRESH_TOKEN` - Refresh token invalid/expired
+- `ACCOUNT_ALREADY_EXISTS` - Account with email already exists
 
 ## Database Schema
 
 The system uses the following main tables:
-- `users` - User accounts with authentication
-- `accounts` - Merchant/user accounts with balances
-- `payments` - Card payment records
-- `payment_logs` - Payment attempt logs
-- `transfers` - Account-to-account transfers
 
-All tables use UUIDs as primary keys and include `created_at`, `updated_at` timestamps.
+### `accounts`
+- `id` (UUID, Primary Key) - Account identifier
+- `name` (String) - Account name
+- `email` (String, Unique) - Account email (used for authentication)
+- `password_hash` (String) - Bcrypt hashed password
+- `is_merchant` (Boolean) - Whether account is a merchant
+- `active` (Boolean) - Account status
+- `created_at`, `updated_at` (Timestamps)
+- `deleted_at` (Soft delete)
+
+### `cards`
+- `id` (UUID, Primary Key) - Card identifier
+- `account_id` (UUID, Foreign Key → accounts.id) - Owner account
+- `card_number` (String) - Masked card number
+- `card_expiry` (String) - Card expiry (MM/YY format)
+- `balance` (Decimal) - Card balance (financial amounts stored here)
+- `active` (Boolean) - Card status
+- `created_at`, `updated_at` (Timestamps)
+- `deleted_at` (Soft delete)
+
+### `payments`
+- `id` (UUID, Primary Key) - Payment identifier
+- `merchant_account_id` (UUID, Foreign Key → accounts.id) - Merchant receiving payment
+- `card_id` (UUID, Foreign Key → cards.id) - Card used for payment
+- `amount` (Decimal) - Payment amount
+- `status` (Enum: pending, accepted, failed)
+- `created_at`, `updated_at` (Timestamps)
+- `deleted_at` (Soft delete)
+
+### `transfers`
+- `id` (UUID, Primary Key) - Transfer identifier
+- `source_card_id` (UUID, Foreign Key → cards.id) - Source card
+- `destination_card_id` (UUID, Foreign Key → cards.id) - Destination card
+- `amount` (Decimal) - Transfer amount
+- `status` (Enum: pending, completed, failed)
+- `error_message` (String, Optional) - Error details if failed
+- `created_at`, `updated_at` (Timestamps)
+- `deleted_at` (Soft delete)
+
+### `payment_logs`
+- `id` (UUID, Primary Key) - Log identifier
+- `payment_id` (UUID, Foreign Key → payments.id) - Related payment
+- `status` (Enum) - Payment status at log time
+- `error_message` (String, Optional) - Error details
+- `created_at` (Timestamp)
+
+**Key Design Points:**
+- All tables use UUIDs as primary keys
+- Balance is stored on `cards`, not `accounts`
+- Accounts can have multiple cards
+- Payments and transfers operate on card balances
+- All tables include `created_at`, `updated_at` timestamps
+- Soft deletes supported via `deleted_at`
 
 ## Security Considerations
 
-1. **Passwords**: Hashed using bcrypt (cost factor 10)
+1. **Passwords**: Hashed using bcrypt (cost factor 10), stored in accounts table
 2. **Tokens**: JWT tokens with HMAC-SHA256 signing
-3. **Card Data**: Card numbers are masked before storage (only last 4 digits)
+3. **Card Data**: Card numbers stored as masked (only last 4 digits visible)
 4. **Input Validation**: All inputs validated using go-playground/validator
 5. **SQL Injection**: Protected by GORM parameterized queries
-6. **Rate Limiting**: Consider adding rate limiting middleware for production
+6. **Authentication**: Registration creates accounts directly (no separate users table)
+7. **Merchant Validation**: Payments require merchant accounts (`is_merchant: true`)
+8. **Rate Limiting**: Consider adding rate limiting middleware for production
 
 ## Production Recommendations
 
