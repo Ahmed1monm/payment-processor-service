@@ -21,10 +21,8 @@ const (
 type Payment struct {
 	ID                uuid.UUID       `json:"id" gorm:"type:char(36);primaryKey"`
 	MerchantAccountID uuid.UUID       `json:"merchant_account_id" gorm:"type:char(36);not null;index"`
+	CardID            uuid.UUID       `json:"card_id" gorm:"type:char(36);not null;index"`
 	Amount            decimal.Decimal `json:"amount" gorm:"type:decimal(20,2);not null"`
-	CardNumber        string          `json:"card_number" gorm:"size:19;not null"` // Masked card number
-	CardExpiry        string          `json:"card_expiry" gorm:"size:5;not null"`  // MM/YY format
-	CardCVV           string          `json:"-" gorm:"size:4"`                     // Not exposed in JSON
 	Status            PaymentStatus   `json:"status" gorm:"type:varchar(20);not null;default:'pending';index"`
 	CreatedAt         time.Time       `json:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at"`
@@ -32,6 +30,7 @@ type Payment struct {
 
 	// Relations
 	MerchantAccount Account `json:"-" gorm:"foreignKey:MerchantAccountID"`
+	Card            Card    `json:"-" gorm:"foreignKey:CardID"`
 }
 
 // BeforeCreate sets UUID before creating the record.

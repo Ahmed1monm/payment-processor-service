@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"golang.org/x/crypto/bcrypt"
@@ -12,40 +13,75 @@ import (
 
 	"paytabs/internal/auth"
 	"paytabs/internal/model"
+	"paytabs/internal/repository"
 )
 
-// MockUserRepository is a mock implementation of UserRepository.
-type MockUserRepository struct {
+// MockAccountRepository is a mock implementation of AccountRepository.
+type MockAccountRepository struct {
 	mock.Mock
 }
 
-func (m *MockUserRepository) Create(ctx context.Context, user *model.User) error {
-	args := m.Called(ctx, user)
+func (m *MockAccountRepository) Create(ctx context.Context, account *model.Account) error {
+	args := m.Called(ctx, account)
 	return args.Error(0)
 }
 
-func (m *MockUserRepository) FindByID(ctx context.Context, id uint) (*model.User, error) {
+func (m *MockAccountRepository) Update(ctx context.Context, account *model.Account) error {
+	args := m.Called(ctx, account)
+	return args.Error(0)
+}
+
+func (m *MockAccountRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Account, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*model.User), args.Error(1)
+	return args.Get(0).(*model.Account), args.Error(1)
 }
 
-func (m *MockUserRepository) FindByEmail(ctx context.Context, email string) (*model.User, error) {
+func (m *MockAccountRepository) FindByIDForUpdate(ctx context.Context, id uuid.UUID) (*model.Account, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*model.Account), args.Error(1)
+}
+
+func (m *MockAccountRepository) FindByEmail(ctx context.Context, email string) (*model.Account, error) {
 	args := m.Called(ctx, email)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*model.User), args.Error(1)
+	return args.Get(0).(*model.Account), args.Error(1)
 }
 
-func (m *MockUserRepository) List(ctx context.Context) ([]model.User, error) {
+func (m *MockAccountRepository) ListActive(ctx context.Context) ([]model.Account, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]model.User), args.Error(1)
+	return args.Get(0).([]model.Account), args.Error(1)
+}
+
+func (m *MockAccountRepository) FindByIDOrCreate(ctx context.Context, account *model.Account) (*model.Account, error) {
+	args := m.Called(ctx, account)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*model.Account), args.Error(1)
+}
+
+func (m *MockAccountRepository) WithTransaction(ctx context.Context, fn func(ctx context.Context, repo repository.AccountRepository) error) error {
+	args := m.Called(ctx, fn)
+	return args.Error(0)
+}
+
+func (m *MockAccountRepository) FindByIDForUpdateTx(ctx context.Context, tx interface{}, id uuid.UUID) (*model.Account, error) {
+	args := m.Called(ctx, tx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*model.Account), args.Error(1)
 }
 
 // MockTokenStore is a mock implementation of TokenStoreInterface.
@@ -84,27 +120,30 @@ func TestAuthService_Register(t *testing.T) {
 		email         string
 		password      string
 		nameField     string
-		setupMock     func(*MockUserRepository)
+		isMerchant    bool
+		setupMock     func(*MockAccountRepository)
 		expectedError error
 	}{
 		{
-			name:      "successful registration",
-			email:     "test@example.com",
-			password:  "password123",
-			nameField: "Test User",
-			setupMock: func(m *MockUserRepository) {
+			name:       "successful registration",
+			email:      "test@example.com",
+			password:   "password123",
+			nameField:  "Test User",
+			isMerchant: false,
+			setupMock: func(m *MockAccountRepository) {
 				m.On("FindByEmail", mock.Anything, "test@example.com").Return(nil, gorm.ErrRecordNotFound)
-				m.On("Create", mock.Anything, mock.AnythingOfType("*model.User")).Return(nil)
+				m.On("Create", mock.Anything, mock.AnythingOfType("*model.Account")).Return(nil)
 			},
 			expectedError: nil,
 		},
 		{
-			name:      "user already exists",
-			email:     "existing@example.com",
-			password:  "password123",
-			nameField: "Existing User",
-			setupMock: func(m *MockUserRepository) {
-				m.On("FindByEmail", mock.Anything, "existing@example.com").Return(&model.User{Email: "existing@example.com"}, nil)
+			name:       "account already exists",
+			email:      "existing@example.com",
+			password:   "password123",
+			nameField:  "Existing User",
+			isMerchant: false,
+			setupMock: func(m *MockAccountRepository) {
+				m.On("FindByEmail", mock.Anything, "existing@example.com").Return(&model.Account{Email: "existing@example.com"}, nil)
 			},
 			expectedError: ErrUserAlreadyExists,
 		},
@@ -112,25 +151,25 @@ func TestAuthService_Register(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockRepo := new(MockUserRepository)
+			mockRepo := new(MockAccountRepository)
 			tt.setupMock(mockRepo)
 
 			jwtService := auth.NewJWTService("test-secret")
 			mockTokenStore := new(MockTokenStore)
 
 			service := NewAuthService(mockRepo, jwtService, mockTokenStore)
-			user, err := service.Register(context.Background(), tt.email, tt.password, tt.nameField)
+			account, err := service.Register(context.Background(), tt.email, tt.password, tt.nameField, tt.isMerchant)
 
 			if tt.expectedError != nil {
 				assert.Error(t, err)
 				assert.Equal(t, tt.expectedError, err)
-				assert.Nil(t, user)
+				assert.Nil(t, account)
 			} else {
 				assert.NoError(t, err)
-				assert.NotNil(t, user)
-				assert.Equal(t, tt.email, user.Email)
-				assert.Equal(t, tt.nameField, user.Name)
-				assert.NotEmpty(t, user.PasswordHash)
+				assert.NotNil(t, account)
+				assert.Equal(t, tt.email, account.Email)
+				assert.Equal(t, tt.nameField, account.Name)
+				assert.NotEmpty(t, account.PasswordHash)
 			}
 
 			mockRepo.AssertExpectations(t)
@@ -143,30 +182,33 @@ func TestAuthService_Login(t *testing.T) {
 		name          string
 		email         string
 		password      string
-		setupMock     func(*MockUserRepository, *MockTokenStore)
+		setupMock     func(*MockAccountRepository, *MockTokenStore)
 		expectedError error
 	}{
 		{
 			name:     "successful login",
 			email:    "test@example.com",
 			password: "password123",
-			setupMock: func(mRepo *MockUserRepository, mToken *MockTokenStore) {
+			setupMock: func(mRepo *MockAccountRepository, mToken *MockTokenStore) {
 				// Generate a real bcrypt hash for the password
 				hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), 10)
-				mRepo.On("FindByEmail", mock.Anything, "test@example.com").Return(&model.User{
-					ID:           1,
+				accountID := uuid.New()
+				mRepo.On("FindByEmail", mock.Anything, "test@example.com").Return(&model.Account{
+					ID:           accountID,
 					Email:        "test@example.com",
 					PasswordHash: string(hashedPassword),
 				}, nil)
-				mToken.On("StoreRefreshToken", mock.Anything, mock.Anything, uint(1), "test@example.com", mock.Anything).Return(nil)
+				// Convert UUID to uint for token store (using first 4 bytes)
+				accountIDUint := uint(accountID[0]) + uint(accountID[1])<<8 + uint(accountID[2])<<16 + uint(accountID[3])<<24
+				mToken.On("StoreRefreshToken", mock.Anything, mock.Anything, accountIDUint, "test@example.com", mock.Anything).Return(nil)
 			},
 			expectedError: nil,
 		},
 		{
-			name:     "invalid credentials - user not found",
+			name:     "invalid credentials - account not found",
 			email:    "notfound@example.com",
 			password: "password123",
-			setupMock: func(mRepo *MockUserRepository, mToken *MockTokenStore) {
+			setupMock: func(mRepo *MockAccountRepository, mToken *MockTokenStore) {
 				mRepo.On("FindByEmail", mock.Anything, "notfound@example.com").Return(nil, gorm.ErrRecordNotFound)
 			},
 			expectedError: ErrInvalidCredentials,
@@ -175,27 +217,27 @@ func TestAuthService_Login(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockRepo := new(MockUserRepository)
+			mockRepo := new(MockAccountRepository)
 			mockTokenStore := new(MockTokenStore)
 			tt.setupMock(mockRepo, mockTokenStore)
 
 			jwtService := auth.NewJWTService("test-secret")
 			service := NewAuthService(mockRepo, jwtService, mockTokenStore)
 
-			accessToken, refreshToken, user, err := service.Login(context.Background(), tt.email, tt.password)
+			accessToken, refreshToken, account, err := service.Login(context.Background(), tt.email, tt.password)
 
 			if tt.expectedError != nil {
 				assert.Error(t, err)
 				assert.Equal(t, tt.expectedError, err)
 				assert.Empty(t, accessToken)
 				assert.Empty(t, refreshToken)
-				assert.Nil(t, user)
+				assert.Nil(t, account)
 			} else {
 				assert.NoError(t, err)
 				assert.NotEmpty(t, accessToken)
 				assert.NotEmpty(t, refreshToken)
-				assert.NotNil(t, user)
-				assert.Equal(t, tt.email, user.Email)
+				assert.NotNil(t, account)
+				assert.Equal(t, tt.email, account.Email)
 			}
 
 			mockRepo.AssertExpectations(t)

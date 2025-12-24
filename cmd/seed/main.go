@@ -9,7 +9,6 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
 	"paytabs/internal/config"
@@ -41,8 +40,31 @@ func main() {
 	}
 	log.Println("Connected to database")
 
-	// Run migrations to ensure schema is up to date
-	if err := gormDB.AutoMigrate(&model.Account{}); err != nil {
+	// Drop all tables to start fresh (in reverse dependency order)
+	log.Println("Dropping existing tables...")
+	tables := []interface{}{
+		&model.Transfer{},
+		&model.PaymentLog{},
+		&model.Payment{},
+		&model.Card{},
+		&model.Account{},
+	}
+	for _, table := range tables {
+		if err := gormDB.Migrator().DropTable(table); err != nil {
+			log.Printf("Warning: Failed to drop table (may not exist): %v", err)
+		}
+	}
+	log.Println("Tables dropped")
+
+	// Run migrations to create fresh schema
+	log.Println("Running migrations...")
+	if err := gormDB.AutoMigrate(
+		&model.Account{},
+		&model.Card{},
+		&model.Payment{},
+		&model.PaymentLog{},
+		&model.Transfer{},
+	); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 	log.Println("Database migrations completed")
@@ -66,18 +88,12 @@ func main() {
 			continue
 		}
 
-		balance, err := decimal.NewFromString(item.Balance)
-		if err != nil {
-			log.Printf("Skipping account %s with invalid balance: %s", item.ID, item.Balance)
-			skipped++
-			continue
-		}
-
 		account := model.Account{
-			ID:      accountID,
-			Name:    item.Name,
-			Balance: balance,
-			Active:  item.Active,
+			ID:         accountID,
+			Name:       item.Name,
+			Email:      fmt.Sprintf("account-%s@example.com", accountID.String()),
+			Active:     item.Active,
+			IsMerchant: false,
 		}
 		modelAccounts = append(modelAccounts, account)
 	}
@@ -138,7 +154,6 @@ func seedAccounts(ctx context.Context, repo repository.AccountRepository, accoun
 		if existing != nil {
 			// Update existing account
 			existing.Name = account.Name
-			existing.Balance = account.Balance
 			existing.Active = account.Active
 			if err := repo.Update(ctx, existing); err != nil {
 				return seeded, updated, fmt.Errorf("error updating account %s: %w", account.ID, err)

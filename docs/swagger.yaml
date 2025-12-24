@@ -1,12 +1,495 @@
 basePath: /api
-host: localhost:8080
+definitions:
+  internal_handler.AuthResponse:
+    properties:
+      access_token:
+        type: string
+      refresh_token:
+        type: string
+      user: {}
+    type: object
+  internal_handler.BalanceResponse:
+    properties:
+      account_id:
+        type: string
+      balance:
+        type: string
+    type: object
+  internal_handler.CardPaymentRequest:
+    properties:
+      amount:
+        type: string
+      card_cvv:
+        type: string
+      card_expiry:
+        type: string
+      card_number:
+        type: string
+      merchant_account_id:
+        type: string
+    required:
+    - amount
+    - card_cvv
+    - card_expiry
+    - card_number
+    - merchant_account_id
+    type: object
+  internal_handler.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  internal_handler.LogoutRequest:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  internal_handler.PaymentResponse:
+    properties:
+      message:
+        type: string
+      payment_id:
+        type: string
+      status:
+        type: string
+    type: object
+  internal_handler.RefreshRequest:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  internal_handler.RegisterRequest:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+      password:
+        minLength: 6
+        type: string
+    required:
+    - email
+    - name
+    - password
+    type: object
+  internal_handler.SeedAccountsResponse:
+    properties:
+      count:
+        type: integer
+      message:
+        type: string
+    type: object
+  internal_handler.TransferRequest:
+    properties:
+      amount:
+        type: string
+      destination_account_id:
+        type: string
+      source_account_id:
+        type: string
+    required:
+    - amount
+    - destination_account_id
+    - source_account_id
+    type: object
+  internal_handler.TransferResponse:
+    properties:
+      message:
+        type: string
+      status:
+        type: string
+      transfer_id:
+        type: string
+    type: object
+  paytabs_internal_errors.ErrorResponse:
+    properties:
+      code:
+        type: string
+      error:
+        type: string
+    type: object
+  paytabs_internal_model.User:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      role:
+        description: Optional for future admin features
+        type: string
+      updated_at:
+        type: string
+    type: object
+host: localhost:5000
 info:
   contact: {}
-  description: Sample Echo service with repository pattern, GORM, Redis cache, JWT,
-    and Swagger docs.
-  title: Echo Starter API
+  description: Payment processor API with card payments, account transfers, and JWT
+    authentication.
+  title: Payment Processor API
   version: "1.0"
-paths: {}
+paths:
+  /accounts/{id}/balance:
+    get:
+      parameters:
+      - description: Account ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.BalanceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get account balance
+      tags:
+      - accounts
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Login credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+      summary: Login user
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Refresh token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.LogoutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+      summary: Logout user
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Refresh token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+      summary: Refresh access token
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Registration data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+      summary: Register a new user
+      tags:
+      - auth
+  /payments/card:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Payment data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CardPaymentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.PaymentResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Process a card payment
+      tags:
+      - payments
+  /seed/accounts:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.SeedAccountsResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Seed accounts from external API
+      tags:
+      - seed
+  /transfers:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Transfer data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.TransferRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.TransferResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/paytabs_internal_errors.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Process an account-to-account transfer
+      tags:
+      - transfers
+  /users:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/paytabs_internal_model.User'
+            type: array
+      summary: List users
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User payload
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/paytabs_internal_model.User'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/paytabs_internal_model.User'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create user
+      tags:
+      - users
+  /users/{id}:
+    get:
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/paytabs_internal_model.User'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get user by id
+      tags:
+      - users
 schemes:
 - http
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and JWT token.
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

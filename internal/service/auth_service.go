@@ -11,6 +11,7 @@ import (
 	"paytabs/internal/auth"
 	"paytabs/internal/model"
 	"paytabs/internal/repository"
+	"github.com/google/uuid"
 )
 
 const bcryptCost = 10
@@ -26,37 +27,37 @@ var (
 
 // AuthService handles authentication operations.
 type AuthService interface {
-	Register(ctx context.Context, email, password, name string) (*model.User, error)
-	Login(ctx context.Context, email, password string) (accessToken, refreshToken string, user *model.User, err error)
+	Register(ctx context.Context, email, password, name string, isMerchant bool) (*model.Account, error)
+	Login(ctx context.Context, email, password string) (accessToken, refreshToken string, account *model.Account, err error)
 	RefreshToken(ctx context.Context, refreshToken string) (accessToken string, err error)
 	Logout(ctx context.Context, refreshToken string) error
 }
 
 type authService struct {
-	userRepo   repository.UserRepository
-	jwtService *auth.JWTService
-	tokenStore auth.TokenStoreInterface
+	accountRepo repository.AccountRepository
+	jwtService  *auth.JWTService
+	tokenStore   auth.TokenStoreInterface
 }
 
 // NewAuthService creates a new authentication service.
-func NewAuthService(userRepo repository.UserRepository, jwtService *auth.JWTService, tokenStore auth.TokenStoreInterface) AuthService {
+func NewAuthService(accountRepo repository.AccountRepository, jwtService *auth.JWTService, tokenStore auth.TokenStoreInterface) AuthService {
 	return &authService{
-		userRepo:   userRepo,
-		jwtService: jwtService,
-		tokenStore: tokenStore,
+		accountRepo: accountRepo,
+		jwtService:  jwtService,
+		tokenStore:  tokenStore,
 	}
 }
 
-// Register creates a new user account with hashed password.
-func (s *authService) Register(ctx context.Context, email, password, name string) (*model.User, error) {
-	// Check if user already exists
-	existing, err := s.userRepo.FindByEmail(ctx, email)
+// Register creates a new account with hashed password.
+func (s *authService) Register(ctx context.Context, email, password, name string, isMerchant bool) (*model.Account, error) {
+	// Check if account already exists
+	existing, err := s.accountRepo.FindByEmail(ctx, email)
 	if err == nil && existing != nil {
 		return nil, ErrUserAlreadyExists
 	}
 	// If error is not "record not found", return it (could be a database error)
 	if err != nil && err != gorm.ErrRecordNotFound {
-		return nil, fmt.Errorf("check user existence: %w", err)
+		return nil, fmt.Errorf("check account existence: %w", err)
 	}
 
 	// Hash password
@@ -65,52 +66,55 @@ func (s *authService) Register(ctx context.Context, email, password, name string
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
 
-	// Create user
-	user := &model.User{
+	// Create account
+	account := &model.Account{
+		ID:           uuid.New(),
 		Email:        email,
 		PasswordHash: string(hashedPassword),
 		Name:         name,
-		Role:         "user",
+		IsMerchant:   isMerchant,
+		Active:       true,
 	}
 
-	if err := s.userRepo.Create(ctx, user); err != nil {
-		return nil, fmt.Errorf("create user: %w", err)
+	if err := s.accountRepo.Create(ctx, account); err != nil {
+		return nil, fmt.Errorf("create account: %w", err)
 	}
 
-	return user, nil
+	return account, nil
 }
 
-// Login authenticates a user and returns access and refresh tokens.
-func (s *authService) Login(ctx context.Context, email, password string) (accessToken, refreshToken string, user *model.User, err error) {
-	// Find user by email
-	user, err = s.userRepo.FindByEmail(ctx, email)
+// Login authenticates an account and returns access and refresh tokens.
+func (s *authService) Login(ctx context.Context, email, password string) (accessToken, refreshToken string, account *model.Account, err error) {
+	// Find account by email
+	account, err = s.accountRepo.FindByEmail(ctx, email)
 	if err != nil {
 		return "", "", nil, ErrInvalidCredentials
 	}
 
 	// Verify password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(account.PasswordHash), []byte(password)); err != nil {
 		return "", "", nil, ErrInvalidCredentials
 	}
 
-	// Generate access token
-	accessToken, err = s.jwtService.GenerateAccessToken(user.ID, user.Email)
+	// Generate access token (using account ID as uint)
+	accountIDUint := uint(account.ID[0]) + uint(account.ID[1])<<8 + uint(account.ID[2])<<16 + uint(account.ID[3])<<24
+	accessToken, err = s.jwtService.GenerateAccessToken(accountIDUint, account.Email)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("generate access token: %w", err)
 	}
 
 	// Generate refresh token
-	tokenID, refreshToken, err := s.jwtService.GenerateRefreshToken(user.ID, user.Email)
+	tokenID, refreshToken, err := s.jwtService.GenerateRefreshToken(accountIDUint, account.Email)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("generate refresh token: %w", err)
 	}
 
 	// Store refresh token in Redis
-	if err := s.tokenStore.StoreRefreshToken(ctx, tokenID, user.ID, user.Email, auth.RefreshTokenExpiry); err != nil {
+	if err := s.tokenStore.StoreRefreshToken(ctx, tokenID, accountIDUint, account.Email, auth.RefreshTokenExpiry); err != nil {
 		return "", "", nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
-	return accessToken, refreshToken, user, nil
+	return accessToken, refreshToken, account, nil
 }
 
 // RefreshToken validates a refresh token and returns a new access token.

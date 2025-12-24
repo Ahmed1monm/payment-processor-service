@@ -14,110 +14,110 @@ import (
 	"paytabs/internal/repository"
 )
 
-// TransferService handles account-to-account transfer operations.
+// TransferService handles card-to-card transfer operations.
 type TransferService interface {
-	ProcessTransfer(ctx context.Context, sourceAccountID, destinationAccountID uuid.UUID, amount decimal.Decimal) (*model.Transfer, error)
+	ProcessTransfer(ctx context.Context, sourceCardID, destinationCardID uuid.UUID, amount decimal.Decimal) (*model.Transfer, error)
 }
 
 type transferService struct {
-	accountRepo  repository.AccountRepository
+	cardRepo     repository.CardRepository
 	transferRepo repository.TransferRepository
 	cache        *cache.Client
 }
 
 // NewTransferService creates a new transfer service.
 func NewTransferService(
-	accountRepo repository.AccountRepository,
+	cardRepo repository.CardRepository,
 	transferRepo repository.TransferRepository,
 	cache *cache.Client,
 ) TransferService {
 	return &transferService{
-		accountRepo:  accountRepo,
+		cardRepo:     cardRepo,
 		transferRepo: transferRepo,
 		cache:        cache,
 	}
 }
 
-// ProcessTransfer processes an account-to-account transfer with atomic balance updates.
-func (s *transferService) ProcessTransfer(ctx context.Context, sourceAccountID, destinationAccountID uuid.UUID, amount decimal.Decimal) (*model.Transfer, error) {
+// ProcessTransfer processes a card-to-card transfer with atomic balance updates.
+func (s *transferService) ProcessTransfer(ctx context.Context, sourceCardID, destinationCardID uuid.UUID, amount decimal.Decimal) (*model.Transfer, error) {
 	// Validate amount
 	if amount.LessThanOrEqual(decimal.Zero) {
 		return nil, errors.ErrInvalidAmount
 	}
 
 	// Prevent self-transfer
-	if sourceAccountID == destinationAccountID {
-		return nil, fmt.Errorf("cannot transfer to the same account")
+	if sourceCardID == destinationCardID {
+		return nil, fmt.Errorf("cannot transfer to the same card")
 	}
 
 	// Create transfer record
 	transfer := &model.Transfer{
-		SourceAccountID:      sourceAccountID,
-		DestinationAccountID: destinationAccountID,
-		Amount:               amount,
-		Status:               model.TransferStatusPending,
+		SourceCardID:      sourceCardID,
+		DestinationCardID: destinationCardID,
+		Amount:            amount,
+		Status:            model.TransferStatusPending,
 	}
 
 	// Use transaction for atomic balance updates
-	err := s.accountRepo.WithTransaction(ctx, func(ctx context.Context, txRepo repository.AccountRepository) error {
-		// Lock and fetch source account
-		sourceAccount, err := txRepo.FindByIDForUpdate(ctx, sourceAccountID)
+	err := s.cardRepo.WithTransaction(ctx, func(ctx context.Context, txRepo repository.CardRepository) error {
+		// Lock and fetch source card
+		sourceCard, err := txRepo.FindByIDForUpdate(ctx, sourceCardID)
 		if err != nil {
 			if err == gorm.ErrRecordNotFound {
 				transfer.Status = model.TransferStatusFailed
-				transfer.ErrorMessage = errors.ErrAccountNotFound.Error()
-				return errors.ErrAccountNotFound
+				transfer.ErrorMessage = "source card not found"
+				return fmt.Errorf("source card not found")
 			}
 			transfer.Status = model.TransferStatusFailed
 			transfer.ErrorMessage = err.Error()
 			return err
 		}
 
-		// Validate source account is active
-		if !sourceAccount.Active {
+		// Validate source card is active
+		if !sourceCard.Active {
 			transfer.Status = model.TransferStatusFailed
-			transfer.ErrorMessage = errors.ErrAccountInactive.Error()
-			return errors.ErrAccountInactive
+			transfer.ErrorMessage = "source card is not active"
+			return fmt.Errorf("source card is not active")
 		}
 
 		// Check sufficient balance
-		if sourceAccount.Balance.LessThan(amount) {
+		if sourceCard.Balance.LessThan(amount) {
 			transfer.Status = model.TransferStatusFailed
 			transfer.ErrorMessage = errors.ErrInsufficientBalance.Error()
 			return errors.ErrInsufficientBalance
 		}
 
-		// Lock and fetch destination account
-		destAccount, err := txRepo.FindByIDForUpdate(ctx, destinationAccountID)
+		// Lock and fetch destination card
+		destCard, err := txRepo.FindByIDForUpdate(ctx, destinationCardID)
 		if err != nil {
 			if err == gorm.ErrRecordNotFound {
 				transfer.Status = model.TransferStatusFailed
-				transfer.ErrorMessage = errors.ErrAccountNotFound.Error()
-				return errors.ErrAccountNotFound
+				transfer.ErrorMessage = "destination card not found"
+				return fmt.Errorf("destination card not found")
 			}
 			transfer.Status = model.TransferStatusFailed
 			transfer.ErrorMessage = err.Error()
 			return err
 		}
 
-		// Validate destination account is active
-		if !destAccount.Active {
+		// Validate destination card is active
+		if !destCard.Active {
 			transfer.Status = model.TransferStatusFailed
-			transfer.ErrorMessage = errors.ErrAccountInactive.Error()
-			return errors.ErrAccountInactive
+			transfer.ErrorMessage = "destination card is not active"
+			return fmt.Errorf("destination card is not active")
 		}
 
 		// Update balances atomically
-		newSourceBalance := sourceAccount.Balance.Sub(amount)
-		newDestBalance := destAccount.Balance.Add(amount)
+		newSourceBalance := sourceCard.Balance.Sub(amount)
+		newDestBalance := destCard.Balance.Add(amount)
 
-		if err := txRepo.UpdateBalance(ctx, sourceAccountID, newSourceBalance); err != nil {
+		if err := txRepo.UpdateBalance(ctx, sourceCardID, newSourceBalance); err != nil {
 			transfer.Status = model.TransferStatusFailed
 			transfer.ErrorMessage = fmt.Sprintf("failed to update source balance: %v", err)
 			return err
 		}
 
-		if err := txRepo.UpdateBalance(ctx, destinationAccountID, newDestBalance); err != nil {
+		if err := txRepo.UpdateBalance(ctx, destinationCardID, newDestBalance); err != nil {
 			transfer.Status = model.TransferStatusFailed
 			transfer.ErrorMessage = fmt.Sprintf("failed to update destination balance: %v", err)
 			return err
@@ -138,9 +138,9 @@ func (s *transferService) ProcessTransfer(ctx context.Context, sourceAccountID, 
 		return transfer, err
 	}
 
-	// Invalidate cache for both accounts
-	_ = s.cache.Delete(ctx, fmt.Sprintf("account:%s", sourceAccountID.String()))
-	_ = s.cache.Delete(ctx, fmt.Sprintf("account:%s", destinationAccountID.String()))
+	// Invalidate cache for both cards
+	_ = s.cache.Delete(ctx, fmt.Sprintf("card:%s", sourceCardID.String()))
+	_ = s.cache.Delete(ctx, fmt.Sprintf("card:%s", destinationCardID.String()))
 
 	return transfer, nil
 }

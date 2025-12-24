@@ -18,17 +18,17 @@ import (
 
 // PaymentService handles payment processing operations.
 type PaymentService interface {
-	ProcessCardPayment(ctx context.Context, merchantAccountID uuid.UUID, amount decimal.Decimal, cardNumber, cardExpiry, cardCVV string) (*model.Payment, error)
+	ProcessCardPayment(ctx context.Context, merchantAccountID uuid.UUID, cardID uuid.UUID, amount decimal.Decimal) (*model.Payment, error)
 }
 
 type paymentService struct {
 	accountRepo    repository.AccountRepository
+	cardRepo       repository.CardRepository
 	paymentRepo    repository.PaymentRepository
 	paymentLogRepo repository.PaymentLogRepository
 	cache          *cache.Client
-	validator      *CardValidator
-	// Mutex map for per-account locking
-	accountMutexes sync.Map
+	// Mutex map for per-card locking
+	cardMutexes sync.Map
 	// Channel for async payment logging
 	logChannel chan model.PaymentLog
 }
@@ -36,16 +36,17 @@ type paymentService struct {
 // NewPaymentService creates a new payment service.
 func NewPaymentService(
 	accountRepo repository.AccountRepository,
+	cardRepo repository.CardRepository,
 	paymentRepo repository.PaymentRepository,
 	paymentLogRepo repository.PaymentLogRepository,
 	cache *cache.Client,
 ) PaymentService {
 	service := &paymentService{
 		accountRepo:    accountRepo,
+		cardRepo:       cardRepo,
 		paymentRepo:    paymentRepo,
 		paymentLogRepo: paymentLogRepo,
 		cache:          cache,
-		validator:      NewCardValidator(),
 		logChannel:     make(chan model.PaymentLog, 100),
 	}
 
@@ -55,10 +56,10 @@ func NewPaymentService(
 	return service
 }
 
-// getMutex returns a mutex for a specific account ID.
-func (s *paymentService) getMutex(accountID uuid.UUID) *sync.Mutex {
-	key := accountID.String()
-	value, _ := s.accountMutexes.LoadOrStore(key, &sync.Mutex{})
+// getMutex returns a mutex for a specific card ID.
+func (s *paymentService) getMutex(cardID uuid.UUID) *sync.Mutex {
+	key := cardID.String()
+	value, _ := s.cardMutexes.LoadOrStore(key, &sync.Mutex{})
 	return value.(*sync.Mutex)
 }
 
@@ -96,59 +97,87 @@ func (s *paymentService) logWorker(ctx context.Context) {
 }
 
 // ProcessCardPayment processes a card payment for a merchant.
-func (s *paymentService) ProcessCardPayment(ctx context.Context, merchantAccountID uuid.UUID, amount decimal.Decimal, cardNumber, cardExpiry, cardCVV string) (*model.Payment, error) {
+func (s *paymentService) ProcessCardPayment(ctx context.Context, merchantAccountID uuid.UUID, cardID uuid.UUID, amount decimal.Decimal) (*model.Payment, error) {
 	// Validate amount
 	if amount.LessThanOrEqual(decimal.Zero) {
 		return nil, errors.ErrInvalidAmount
 	}
 
-	// Validate card
-	if err := s.validator.ValidateCard(cardNumber, cardExpiry, cardCVV); err != nil {
-		payment := s.createPaymentRecord(merchantAccountID, amount, cardNumber, cardExpiry, cardCVV, model.PaymentStatusFailed)
-		_ = s.paymentRepo.Create(ctx, payment)
-		s.logPayment(ctx, payment.ID, model.PaymentStatusFailed, err.Error())
-		return payment, err
-	}
-
-	// Get mutex for this account
-	mutex := s.getMutex(merchantAccountID)
+	// Get mutex for this card
+	mutex := s.getMutex(cardID)
 	mutex.Lock()
 	defer mutex.Unlock()
 
 	// Validate merchant account exists and is active
-	merchant, err := s.accountRepo.FindByIDForUpdate(ctx, merchantAccountID)
+	merchant, err := s.accountRepo.FindByID(ctx, merchantAccountID)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			payment := s.createPaymentRecord(merchantAccountID, amount, cardNumber, cardExpiry, cardCVV, model.PaymentStatusFailed)
+			payment := s.createPaymentRecord(merchantAccountID, cardID, amount, model.PaymentStatusFailed)
 			_ = s.paymentRepo.Create(ctx, payment)
 			s.logPayment(ctx, payment.ID, model.PaymentStatusFailed, errors.ErrAccountNotFound.Error())
 			return payment, errors.ErrAccountNotFound
 		}
-		payment := s.createPaymentRecord(merchantAccountID, amount, cardNumber, cardExpiry, cardCVV, model.PaymentStatusFailed)
+		payment := s.createPaymentRecord(merchantAccountID, cardID, amount, model.PaymentStatusFailed)
 		_ = s.paymentRepo.Create(ctx, payment)
 		s.logPayment(ctx, payment.ID, model.PaymentStatusFailed, err.Error())
 		return payment, err
 	}
 
 	if !merchant.Active {
-		payment := s.createPaymentRecord(merchantAccountID, amount, cardNumber, cardExpiry, cardCVV, model.PaymentStatusFailed)
+		payment := s.createPaymentRecord(merchantAccountID, cardID, amount, model.PaymentStatusFailed)
 		_ = s.paymentRepo.Create(ctx, payment)
 		s.logPayment(ctx, payment.ID, model.PaymentStatusFailed, errors.ErrAccountInactive.Error())
 		return payment, errors.ErrAccountInactive
 	}
 
+	if !merchant.IsMerchant {
+		payment := s.createPaymentRecord(merchantAccountID, cardID, amount, model.PaymentStatusFailed)
+		_ = s.paymentRepo.Create(ctx, payment)
+		s.logPayment(ctx, payment.ID, model.PaymentStatusFailed, "account is not a merchant")
+		return payment, fmt.Errorf("account is not a merchant")
+	}
+
+	// Validate card exists and is active
+	card, err := s.cardRepo.FindByIDForUpdate(ctx, cardID)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			payment := s.createPaymentRecord(merchantAccountID, cardID, amount, model.PaymentStatusFailed)
+			_ = s.paymentRepo.Create(ctx, payment)
+			s.logPayment(ctx, payment.ID, model.PaymentStatusFailed, "card not found")
+			return payment, fmt.Errorf("card not found")
+		}
+		payment := s.createPaymentRecord(merchantAccountID, cardID, amount, model.PaymentStatusFailed)
+		_ = s.paymentRepo.Create(ctx, payment)
+		s.logPayment(ctx, payment.ID, model.PaymentStatusFailed, err.Error())
+		return payment, err
+	}
+
+	if !card.Active {
+		payment := s.createPaymentRecord(merchantAccountID, cardID, amount, model.PaymentStatusFailed)
+		_ = s.paymentRepo.Create(ctx, payment)
+		s.logPayment(ctx, payment.ID, model.PaymentStatusFailed, "card is not active")
+		return payment, fmt.Errorf("card is not active")
+	}
+
 	// Create payment record
-	payment := s.createPaymentRecord(merchantAccountID, amount, cardNumber, cardExpiry, cardCVV, model.PaymentStatusPending)
+	payment := s.createPaymentRecord(merchantAccountID, cardID, amount, model.PaymentStatusPending)
 	if err := s.paymentRepo.Create(ctx, payment); err != nil {
 		s.logPayment(ctx, payment.ID, model.PaymentStatusFailed, err.Error())
 		return payment, fmt.Errorf("create payment: %w", err)
 	}
 
-	// Update merchant balance atomically
-	newBalance := merchant.Balance.Add(amount)
-	if err := s.accountRepo.UpdateBalance(ctx, merchantAccountID, newBalance); err != nil {
+	// Update card balance atomically (deduct from card)
+	newBalance := card.Balance.Sub(amount)
+	if newBalance.LessThan(decimal.Zero) {
 		payment.Status = model.PaymentStatusFailed
-		_ = s.paymentRepo.Update(ctx, payment) // Update status
+		_ = s.paymentRepo.Update(ctx, payment)
+		s.logPayment(ctx, payment.ID, model.PaymentStatusFailed, errors.ErrInsufficientBalance.Error())
+		return payment, errors.ErrInsufficientBalance
+	}
+
+	if err := s.cardRepo.UpdateBalance(ctx, cardID, newBalance); err != nil {
+		payment.Status = model.PaymentStatusFailed
+		_ = s.paymentRepo.Update(ctx, payment)
 		s.logPayment(ctx, payment.ID, model.PaymentStatusFailed, fmt.Sprintf("failed to update balance: %v", err))
 		return payment, fmt.Errorf("update balance: %w", err)
 	}
@@ -156,13 +185,12 @@ func (s *paymentService) ProcessCardPayment(ctx context.Context, merchantAccount
 	// Mark payment as accepted
 	payment.Status = model.PaymentStatusAccepted
 	if err := s.paymentRepo.Update(ctx, payment); err != nil {
-		// Log error but payment is already processed
 		s.logPayment(ctx, payment.ID, model.PaymentStatusAccepted, "")
 		return payment, nil
 	}
 
 	// Invalidate cache
-	_ = s.cache.Delete(ctx, fmt.Sprintf("account:%s", merchantAccountID.String()))
+	_ = s.cache.Delete(ctx, fmt.Sprintf("card:%s", cardID.String()))
 
 	// Log successful payment
 	s.logPayment(ctx, payment.ID, model.PaymentStatusAccepted, "")
@@ -170,15 +198,13 @@ func (s *paymentService) ProcessCardPayment(ctx context.Context, merchantAccount
 	return payment, nil
 }
 
-// createPaymentRecord creates a payment record with masked card number.
-func (s *paymentService) createPaymentRecord(merchantAccountID uuid.UUID, amount decimal.Decimal, cardNumber, cardExpiry, cardCVV string, status model.PaymentStatus) *model.Payment {
+// createPaymentRecord creates a payment record.
+func (s *paymentService) createPaymentRecord(merchantAccountID uuid.UUID, cardID uuid.UUID, amount decimal.Decimal, status model.PaymentStatus) *model.Payment {
 	return &model.Payment{
 		MerchantAccountID: merchantAccountID,
-		Amount:           amount,
-		CardNumber:       s.validator.MaskCardNumber(cardNumber),
-		CardExpiry:       cardExpiry,
-		CardCVV:          cardCVV,
-		Status:           status,
+		CardID:            cardID,
+		Amount:            amount,
+		Status:            status,
 	}
 }
 

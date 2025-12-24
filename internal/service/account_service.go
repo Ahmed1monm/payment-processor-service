@@ -26,15 +26,17 @@ type AccountService interface {
 }
 
 type accountService struct {
-	repo  repository.AccountRepository
-	cache *cache.Client
+	repo     repository.AccountRepository
+	cardRepo repository.CardRepository
+	cache    *cache.Client
 }
 
 // NewAccountService creates a new account service.
-func NewAccountService(repo repository.AccountRepository, cache *cache.Client) AccountService {
+func NewAccountService(repo repository.AccountRepository, cardRepo repository.CardRepository, cache *cache.Client) AccountService {
 	return &accountService{
-		repo:  repo,
-		cache: cache,
+		repo:     repo,
+		cardRepo: cardRepo,
+		cache:    cache,
 	}
 }
 
@@ -69,16 +71,28 @@ func (s *accountService) GetAccount(ctx context.Context, id uuid.UUID) (*model.A
 	return account, nil
 }
 
-// GetBalance retrieves the current balance of an account.
+// GetBalance retrieves the total balance across all cards for an account.
 func (s *accountService) GetBalance(ctx context.Context, id uuid.UUID) (decimal.Decimal, error) {
-	account, err := s.GetAccount(ctx, id)
+	// Verify account exists
+	_, err := s.GetAccount(ctx, id)
 	if err != nil {
-		if err == errors.ErrAccountNotFound {
-			return decimal.Zero, err
-		}
-		return decimal.Zero, fmt.Errorf("get account: %w", err)
+		return decimal.Zero, err
 	}
-	return account.Balance, nil
+
+	// Get total balance from all cards
+	cards, err := s.cardRepo.FindByAccountID(ctx, id)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("get cards: %w", err)
+	}
+
+	total := decimal.Zero
+	for _, card := range cards {
+		if card.Active {
+			total = total.Add(card.Balance)
+		}
+	}
+
+	return total, nil
 }
 
 // SeedAccounts creates or updates accounts from external data.
@@ -94,7 +108,6 @@ func (s *accountService) SeedAccounts(ctx context.Context, accounts []model.Acco
 		if existing != nil {
 			// Update existing account with new data
 			existing.Name = account.Name
-			existing.Balance = account.Balance
 			existing.Active = account.Active
 			if err := s.repo.Update(ctx, existing); err != nil {
 				return count, fmt.Errorf("update account %s: %w", account.ID, err)

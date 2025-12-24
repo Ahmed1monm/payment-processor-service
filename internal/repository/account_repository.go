@@ -15,13 +15,12 @@ type AccountRepository interface {
 	Update(ctx context.Context, account *model.Account) error
 	FindByID(ctx context.Context, id uuid.UUID) (*model.Account, error)
 	FindByIDForUpdate(ctx context.Context, id uuid.UUID) (*model.Account, error)
-	UpdateBalance(ctx context.Context, id uuid.UUID, newBalance interface{}) error
+	FindByEmail(ctx context.Context, email string) (*model.Account, error)
 	ListActive(ctx context.Context) ([]model.Account, error)
 	FindByIDOrCreate(ctx context.Context, account *model.Account) (*model.Account, error)
 	// Transaction methods
 	WithTransaction(ctx context.Context, fn func(ctx context.Context, repo AccountRepository) error) error
 	FindByIDForUpdateTx(ctx context.Context, tx interface{}, id uuid.UUID) (*model.Account, error)
-	UpdateBalanceTx(ctx context.Context, tx interface{}, id uuid.UUID, newBalance interface{}) error
 }
 
 type accountRepository struct {
@@ -62,11 +61,13 @@ func (r *accountRepository) FindByIDForUpdate(ctx context.Context, id uuid.UUID)
 	return &account, nil
 }
 
-// UpdateBalance updates the balance of an account.
-func (r *accountRepository) UpdateBalance(ctx context.Context, id uuid.UUID, newBalance interface{}) error {
-	return r.db.WithContext(ctx).Model(&model.Account{}).
-		Where("id = ?", id).
-		Update("balance", newBalance).Error
+// FindByEmail finds an account by email.
+func (r *accountRepository) FindByEmail(ctx context.Context, email string) (*model.Account, error) {
+	var account model.Account
+	if err := r.db.WithContext(ctx).Where("email = ?", email).First(&account).Error; err != nil {
+		return nil, err
+	}
+	return &account, nil
 }
 
 // ListActive lists all active accounts.
@@ -115,10 +116,3 @@ func (r *accountRepository) FindByIDForUpdateTx(ctx context.Context, tx interfac
 	return &account, nil
 }
 
-// UpdateBalanceTx updates the balance within a transaction.
-func (r *accountRepository) UpdateBalanceTx(ctx context.Context, tx interface{}, id uuid.UUID, newBalance interface{}) error {
-	txDB := tx.(*gorm.DB)
-	return txDB.WithContext(ctx).Model(&model.Account{}).
-		Where("id = ?", id).
-		Update("balance", newBalance).Error
-}

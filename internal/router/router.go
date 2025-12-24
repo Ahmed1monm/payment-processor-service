@@ -18,7 +18,6 @@ import (
 func Register(
 	e *echo.Echo,
 	cfg *config.Config,
-	userHandler *handler.UserHandler,
 	authHandler *handler.AuthHandler,
 	accountHandler *handler.AccountHandler,
 	paymentHandler *handler.PaymentHandler,
@@ -39,7 +38,11 @@ func Register(
 		return c.String(http.StatusOK, "ok")
 	})
 
-	e.GET("/swagger/*", echoSwagger.WrapHandler)
+	// Swagger documentation
+	e.GET("/api-docs", func(c echo.Context) error {
+		return c.Redirect(http.StatusFound, "/api-docs/index.html")
+	})
+	e.GET("/api-docs/*", echoSwagger.WrapHandler)
 
 	api := e.Group("/api")
 
@@ -49,11 +52,6 @@ func Register(
 	api.POST("/auth/refresh", authHandler.Refresh)
 	api.POST("/auth/logout", authHandler.Logout)
 	api.GET("/seed/accounts", seedHandler.SeedAccounts)
-
-	// Legacy user routes (optional, can be removed)
-	api.GET("/users", userHandler.ListUsers)
-	api.GET("/users/:id", userHandler.GetUser)
-	api.POST("/users", userHandler.CreateUser)
 
 	// Secured routes (require JWT authentication)
 	secured := api.Group("", echojwt.WithConfig(echojwt.Config{

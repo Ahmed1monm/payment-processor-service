@@ -24,10 +24,8 @@ func NewPaymentHandler(paymentService service.PaymentService) *PaymentHandler {
 // CardPaymentRequest represents a card payment request.
 type CardPaymentRequest struct {
 	MerchantAccountID string `json:"merchant_account_id" validate:"required,uuid"`
+	CardID            string `json:"card_id" validate:"required,uuid"`
 	Amount            string `json:"amount" validate:"required"`
-	CardNumber        string `json:"card_number" validate:"required"`
-	CardExpiry        string `json:"card_expiry" validate:"required"`
-	CardCVV           string `json:"card_cvv" validate:"required"`
 }
 
 // PaymentResponse represents a payment response.
@@ -75,6 +73,15 @@ func (h *PaymentHandler) ProcessCardPayment(c echo.Context) error {
 		})
 	}
 
+	// Parse card ID
+	cardID, err := uuid.Parse(req.CardID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, errors.ErrorResponse{
+			Error: "invalid card_id",
+			Code:  "INVALID_UUID",
+		})
+	}
+
 	// Parse amount
 	amount, err := decimal.NewFromString(req.Amount)
 	if err != nil {
@@ -88,10 +95,8 @@ func (h *PaymentHandler) ProcessCardPayment(c echo.Context) error {
 	payment, err := h.paymentService.ProcessCardPayment(
 		c.Request().Context(),
 		merchantAccountID,
+		cardID,
 		amount,
-		req.CardNumber,
-		req.CardExpiry,
-		req.CardCVV,
 	)
 
 	if err != nil {

@@ -8,6 +8,8 @@ import (
 var (
 	// ErrAccountNotFound is returned when an account is not found.
 	ErrAccountNotFound = errors.New("account not found")
+	// ErrCardNotFound is returned when a card is not found.
+	ErrCardNotFound = errors.New("card not found")
 	// ErrInsufficientBalance is returned when account has insufficient balance.
 	ErrInsufficientBalance = errors.New("insufficient balance")
 	// ErrInvalidCard is returned when card validation fails.
@@ -57,6 +59,8 @@ func MapErrorToHTTP(err error) *HTTPError {
 	switch err {
 	case ErrAccountNotFound:
 		return NewHTTPError(http.StatusNotFound, err.Error(), "ACCOUNT_NOT_FOUND")
+	case ErrCardNotFound:
+		return NewHTTPError(http.StatusNotFound, err.Error(), "CARD_NOT_FOUND")
 	case ErrInsufficientBalance:
 		return NewHTTPError(http.StatusBadRequest, err.Error(), "INSUFFICIENT_BALANCE")
 	case ErrInvalidCard:

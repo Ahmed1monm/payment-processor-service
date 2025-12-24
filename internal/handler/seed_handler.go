@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-	"github.com/shopspring/decimal"
 
 	"paytabs/internal/model"
 	"paytabs/internal/service"
@@ -86,17 +85,12 @@ func (h *SeedHandler) SeedAccounts(c echo.Context) error {
 			continue
 		}
 
-		balance, err := decimal.NewFromString(item.Balance)
-		if err != nil {
-			// Skip invalid balances
-			continue
-		}
-
 		account := model.Account{
-			ID:      accountID,
-			Name:    item.Name,
-			Balance: balance,
-			Active:  item.Active,
+			ID:        accountID,
+			Name:      item.Name,
+			Email:     fmt.Sprintf("account-%s@example.com", accountID.String()), // Generate email for seeded accounts
+			Active:    item.Active,
+			IsMerchant: false, // Default to non-merchant for seeded accounts
 		}
 		accounts = append(accounts, account)
 	}

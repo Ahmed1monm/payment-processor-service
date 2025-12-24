@@ -23,9 +23,9 @@ func NewTransferHandler(transferService service.TransferService) *TransferHandle
 
 // TransferRequest represents a transfer request.
 type TransferRequest struct {
-	SourceAccountID      string `json:"source_account_id" validate:"required,uuid"`
-	DestinationAccountID string `json:"destination_account_id" validate:"required,uuid"`
-	Amount               string `json:"amount" validate:"required"`
+	SourceCardID      string `json:"source_card_id" validate:"required,uuid"`
+	DestinationCardID string `json:"destination_card_id" validate:"required,uuid"`
+	Amount            string `json:"amount" validate:"required"`
 }
 
 // TransferResponse represents a transfer response.
@@ -64,19 +64,19 @@ func (h *TransferHandler) ProcessTransfer(c echo.Context) error {
 		})
 	}
 
-	// Parse account IDs
-	sourceAccountID, err := uuid.Parse(req.SourceAccountID)
+	// Parse card IDs
+	sourceCardID, err := uuid.Parse(req.SourceCardID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, errors.ErrorResponse{
-			Error: "invalid source_account_id",
+			Error: "invalid source_card_id",
 			Code:  "INVALID_UUID",
 		})
 	}
 
-	destinationAccountID, err := uuid.Parse(req.DestinationAccountID)
+	destinationCardID, err := uuid.Parse(req.DestinationCardID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, errors.ErrorResponse{
-			Error: "invalid destination_account_id",
+			Error: "invalid destination_card_id",
 			Code:  "INVALID_UUID",
 		})
 	}
@@ -93,8 +93,8 @@ func (h *TransferHandler) ProcessTransfer(c echo.Context) error {
 	// Process transfer
 	transfer, err := h.transferService.ProcessTransfer(
 		c.Request().Context(),
-		sourceAccountID,
-		destinationAccountID,
+		sourceCardID,
+		destinationCardID,
 		amount,
 	)
 

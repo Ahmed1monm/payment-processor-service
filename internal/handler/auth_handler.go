@@ -20,11 +20,12 @@ func NewAuthHandler(authService service.AuthService) *AuthHandler {
 	return &AuthHandler{authService: authService}
 }
 
-// RegisterRequest represents a user registration request.
+// RegisterRequest represents an account registration request.
 type RegisterRequest struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required,min=6"`
-	Name     string `json:"name" validate:"required"`
+	Email      string `json:"email" validate:"required,email"`
+	Password   string `json:"password" validate:"required,min=6"`
+	Name       string `json:"name" validate:"required"`
+	IsMerchant bool   `json:"is_merchant"`
 }
 
 // LoginRequest represents a user login request.
@@ -71,23 +72,23 @@ func (h *AuthHandler) Register(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	user, err := h.authService.Register(c.Request().Context(), req.Email, req.Password, req.Name)
+	account, err := h.authService.Register(c.Request().Context(), req.Email, req.Password, req.Name, req.IsMerchant)
 	if err != nil {
 		if err == service.ErrUserAlreadyExists {
 			return echo.NewHTTPError(http.StatusConflict, errors.ErrorResponse{
 				Error: err.Error(),
-				Code:  "USER_ALREADY_EXISTS",
+				Code:  "ACCOUNT_ALREADY_EXISTS",
 			})
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, errors.ErrorResponse{
-			Error: "failed to register user",
+			Error: "failed to register account",
 			Code:  "REGISTRATION_FAILED",
 		})
 	}
 
 	return c.JSON(http.StatusCreated, map[string]interface{}{
-		"message": "user registered successfully",
-		"user":    user,
+		"message": "account registered successfully",
+		"account": account,
 	})
 }
 
@@ -112,7 +113,7 @@ func (h *AuthHandler) Login(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	accessToken, refreshToken, user, err := h.authService.Login(c.Request().Context(), req.Email, req.Password)
+	accessToken, refreshToken, account, err := h.authService.Login(c.Request().Context(), req.Email, req.Password)
 	if err != nil {
 		if err == service.ErrInvalidCredentials {
 			return echo.NewHTTPError(http.StatusUnauthorized, errors.ErrorResponse{
@@ -129,7 +130,7 @@ func (h *AuthHandler) Login(c echo.Context) error {
 	return c.JSON(http.StatusOK, AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
-		User:         user,
+		User:         account,
 	})
 }
 
